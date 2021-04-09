@@ -1,11 +1,10 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    
+<head>
+
     <meta charset="UTF-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <script src="link.js"></script>
     <script src="login.js"></script>
     <script src="../jquery-3.5.1.js"></script>
     <link rel="icon" href="favicon.ico" type="image/png">
@@ -39,8 +38,8 @@
     }
 
     img{
-        max-width: 70%;
-        max-height: 70%;
+        max-width: 100%;
+        max-height: 100%;
         object-fit: contain;
     }
     
@@ -48,10 +47,6 @@
         width: 70%;
         height: auto;
         display: block;
-    }
-    
-    .right .regist{
-      display: none;
     }
 
     input, button {
@@ -107,29 +102,20 @@
   </style>
 </head>
 <body>
+  <script src="frontend.js"></script>
   
-  <div class="content">
-    <div class="left">
-      <img src="./img/EVIcon.png">
+    <div class="content">
+        <div class="left">
+            <img src="./img/EVIcon.png">
+        </div>
+        <div class="right">
+            <div class="form">
+                    <input type="text" placeholder="Username" id="username_field">
+                    <input type="password" placeholder="Password" id="password_field">
+                    <button id="lgnbtn" onclick="login()">Log in</button> 
+            </div>
+        </div>
     </div>
-    <div class="right">
-      <div class="form login">
-        <input type="text" placeholder="Username" id="login_username_field">
-        <input type="password" placeholder="Password" id="login_password_field">
-        <button id="lgnbtn" onclick="login()">Log in</button> 
-      </div>
-     
-      <div class="form regist">
-        <input type="text" placeholder="Username" id="regist_username_field">
-        <input type="password" placeholder="Password" id="regist_password_field">
-        <input type="password" placeholder="Confirm Password" id="regist_passwordConfirm_field">
-        <input type="email" placeholder="Email" id="regist_email_field">
-        <button id="lgnbtn" onclick="register()">Regist</button> 
-      </div>
-     
-    </div>
-
-  </div>
 
 
 </body>

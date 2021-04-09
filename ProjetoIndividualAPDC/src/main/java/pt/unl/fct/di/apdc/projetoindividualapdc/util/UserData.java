@@ -1,5 +1,7 @@
 package pt.unl.fct.di.apdc.projetoindividualapdc.util;
 
+import com.google.appengine.api.datastore.Entity;
+
 public class UserData {
 	
 	public String username; //*
@@ -76,5 +78,6 @@ public class UserData {
 		this.username = username;
 		this.role = role;
 	}
+	
 	
 }

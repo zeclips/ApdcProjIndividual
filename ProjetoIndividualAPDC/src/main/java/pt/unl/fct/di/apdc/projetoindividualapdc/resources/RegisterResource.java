@@ -32,6 +32,7 @@ public class RegisterResource {
 	@Consumes(MediaType.APPLICATION_JSON)
 	public Response registUserv3 (UserData data) {	
 		LOG.fine("Attempt to register user: " + data.username);
+		if(data.password.length()<6) {return Response.status(Status.FORBIDDEN).entity("Password is too short.").build();}
 		if(!data.password.equals(data.passwordconfirm)) {return Response.status(Status.FORBIDDEN).entity("Passwords dont match.").build();}
 		if(data.password.length()<6) {return Response.status(Status.FORBIDDEN).entity("Password is too short.").build();}
 		
@@ -44,6 +45,7 @@ public class RegisterResource {
 			Entity user = txn.get(userKey);
 			if(user != null) {
 				txn.rollback();
+				LOG.fine("Attempt fail to register user: " + data.username + " - Already Exists");
 				return Response.status(Status.FORBIDDEN).entity("User already exists.").build();
 			}
 			

@@ -53,13 +53,23 @@ public class LoginResource {
 		LOG.fine("Attempt to login user: " + data.username);
 		
 		Key userKey = datastore.newKeyFactory().setKind("User").newKey(data.username);			
+					
 		Entity user = datastore.get(userKey);
 		if(user != null) {
 			String hashedPWD = user.getString("password");
 			if(hashedPWD.equals(DigestUtils.sha512Hex(data.password))) {
 				if(user.getString("state").equals(ENABLED)) {
 					AuthToken at = new AuthToken(data.username,user.getString("role"));
+					Key tokenKey = datastore.newKeyFactory().setKind("Token").newKey(at.tokenID);
 					
+					Entity tokenEntity = Entity.newBuilder(tokenKey)
+							.set("username", at.username)
+							.set("role", at.role)
+							.set("creationData",at.creationData)
+							.set("expirationData",at.expirationData)
+							.build();
+					
+					datastore.put(tokenEntity);
 					tokens.put(data.username, at);
 					LOG.fine("Success login user: " + data.username);
 					return Response.ok(g.toJson(at)).build();

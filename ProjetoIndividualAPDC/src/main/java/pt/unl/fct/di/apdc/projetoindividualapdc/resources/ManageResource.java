@@ -16,11 +16,9 @@ import javax.ws.rs.core.Response.Status;
 
 import org.apache.commons.codec.digest.DigestUtils;
 
-import com.google.cloud.datastore.Datastore;
-import com.google.cloud.datastore.DatastoreOptions;
-import com.google.cloud.datastore.Entity;
-import com.google.cloud.datastore.Key;
-import com.google.cloud.datastore.Transaction;
+import com.google.api.client.json.Json;
+import com.google.cloud.datastore.*;
+import com.google.cloud.datastore.StructuredQuery.PropertyFilter;
 import com.google.gson.Gson;
 
 import pt.unl.fct.di.apdc.projetoindividualapdc.util.AuthToken;
@@ -43,14 +41,23 @@ public class ManageResource {
 	@Consumes(MediaType.APPLICATION_JSON)
 	public Response deleteUser(@PathParam("username") String username,AuthToken at) {
 		LOG.fine("Attempt to delete user: " + username);
-		if(!tokenVerified(at)) {
-			LOG.fine("Failed to delete user: " + username + " - Autentication failed");
-			return Response.status(Status.NETWORK_AUTHENTICATION_REQUIRED).build();	
-		}
-		Key userKey = datastore.newKeyFactory().setKind("User").newKey(username);			
+		
+		Key tokenKey = datastore.newKeyFactory().setKind("Token").newKey(at.tokenID);			
+		
 		Transaction txn = datastore.newTransaction();
 		try {
+			Entity token = txn.get(tokenKey);
+			
+			
+			if(!tokenVerified(token,at)) {
+				LOG.fine("Failed to delete user: " + username + " - Autentication failed");
+				txn.rollback();
+				return Response.status(Status.NETWORK_AUTHENTICATION_REQUIRED).build();	
+			}
+
+			Key userKey = datastore.newKeyFactory().setKind("User").newKey(username);			
 			Entity userToDelete = txn.get(userKey);
+
 			if(userToDelete == null) {
 				LOG.fine("Failed to delete user: " + username + " - User not found");
 				txn.rollback();
@@ -58,7 +65,15 @@ public class ManageResource {
 			}
 			if( Role.Clearance(at.role) > Role.Clearance(userToDelete.getString("role")) || at.username.equals(username)){
 				txn.delete(userKey);
-				LoginResource.tokens.remove(username);
+
+				Query<Entity> query = Query.newEntityQueryBuilder()
+						.setKind("Tokens").setFilter(PropertyFilter.eq("username", username))
+						.build();
+				QueryResults<Entity> tasks = datastore.run(query);
+				tasks.forEachRemaining(tokenToRemove -> {
+					txn.delete(tokenToRemove.getKey());
+				});
+				
 				LOG.fine("Successfully deleted user: " + username);
 				txn.commit();
 				return Response.ok().build();
@@ -83,15 +98,21 @@ public class ManageResource {
 	@Consumes(MediaType.APPLICATION_JSON)
 	public Response updateUser(UpdateData data) {
 		LOG.fine("Attempt to update user: " + data.authToken.username);
-		if(!tokenVerified(data.authToken)) {
-			LOG.fine("Failed to update user: " + data.authToken.username + " - Autentication failed");
-			return Response.status(Status.NETWORK_AUTHENTICATION_REQUIRED).build();	
-		}
 
-		Key userKey = datastore.newKeyFactory().setKind("User").newKey(data.authToken.username);			
+		Key tokenKey = datastore.newKeyFactory().setKind("Token").newKey(data.authToken.tokenID);
+		
 		Transaction txn = datastore.newTransaction();
 		try {
+			Entity token = txn.get(tokenKey);
+			if(!tokenVerified(token, data.authToken)) {
+				LOG.fine("Failed to update user: " + data.authToken.username + " - Autentication failed");
+				txn.rollback();
+				return Response.status(Status.NETWORK_AUTHENTICATION_REQUIRED).build();	
+			}
+			
+			Key userKey = datastore.newKeyFactory().setKind("User").newKey(data.authToken.username);
 			Entity userToUpdate = txn.get(userKey);
+			
 			if(userToUpdate == null) {
 				LOG.fine("Failed to update user: " + data.authToken.username + " - User not found");
 				txn.rollback();
@@ -153,15 +174,33 @@ public class ManageResource {
 	@Consumes(MediaType.APPLICATION_JSON)
 	public Response logOutUser(AuthToken at) {
 		LOG.fine("Attempt to logOut user: " + at.username);
-		if(!tokenVerified(at)) {
-			LOG.fine("Failed to logOut user: " + at.username + " - Autentication failed");
-			return Response.status(Status.NETWORK_AUTHENTICATION_REQUIRED).build();	
+		Key tokenKey = datastore.newKeyFactory().setKind("Token").newKey(at.tokenID);
+
+		Transaction txn = datastore.newTransaction();
+		try {
+			Entity token = txn.get(tokenKey);
+			
+			if(!tokenVerified(token,at)) {
+				LOG.fine("Failed to logOut user: " + at.username + " - Autentication failed");
+				txn.rollback();
+				return Response.status(Status.NETWORK_AUTHENTICATION_REQUIRED).build();	
+			}
+			
+			txn.delete(tokenKey);
+			
+			LOG.fine("Logged out user: " + at.username);
+			txn.commit();
+			return Response.ok().build();
+			
+		} catch (Exception e) {
+			txn.rollback();
+			return Response.status(Status.INTERNAL_SERVER_ERROR).entity(e.getMessage()).build();
+		} finally {
+			if(txn.isActive()) {
+				txn.rollback();
+				return Response.status(Status.INTERNAL_SERVER_ERROR).entity("Transaction did not commit").build();
+			}
 		}
-		
-		
-		LoginResource.tokens.remove(at.username);
-		LOG.fine("Logged out user: " + at.username);
-		return Response.ok().build();
 	}
 /*	
 	@PUT
@@ -182,15 +221,23 @@ public class ManageResource {
 	@Consumes(MediaType.APPLICATION_JSON)
 	public Response changeUserRole(UpdateData data) {
 		LOG.fine("Attempt to change password of user: " + data.userData.username);
-		if(!tokenVerified(data.authToken)) {
-			LOG.fine("Failed to change password of user: " + data.authToken.username + " - Autentication failed");
-			return Response.status(Status.NETWORK_AUTHENTICATION_REQUIRED).build();	
-		}
 		
-		Key userKey = datastore.newKeyFactory().setKind("User").newKey(data.userData.username);			
+		Key tokenKey = datastore.newKeyFactory().setKind("Token").newKey(data.authToken.tokenID);
+
 		Transaction txn = datastore.newTransaction();
+		
 		try {
+			Entity token = txn.get(tokenKey);
+			
+			if(!tokenVerified(token,data.authToken)) {
+				LOG.fine("Failed to change password of user: " + data.authToken.username + " - Autentication failed");
+				txn.rollback();
+				return Response.status(Status.NETWORK_AUTHENTICATION_REQUIRED).build();	
+			}
+
+			Key userKey = datastore.newKeyFactory().setKind("User").newKey(data.userData.username);	
 			Entity userToRole = txn.get(userKey);
+			
 			if(userToRole == null) {
 				LOG.fine("Failed to change role of user: " + data.userData.username + " - User not found");
 				txn.rollback();
@@ -241,21 +288,29 @@ public class ManageResource {
 	@Consumes(MediaType.APPLICATION_JSON)
 	public Response changeUserPassword(UpdateData data) {
 		LOG.fine("Attempt to change password of user: " + data.authToken.username);
-		if(!tokenVerified(data.authToken)) {
-			LOG.fine("Failed to change password of user: " + data.authToken.username + " - Autentication failed");
-			return Response.status(Status.NETWORK_AUTHENTICATION_REQUIRED).build();	
-		}
-		if(data.userData.password.length()<6) {return Response.status(Status.BAD_REQUEST).entity("Password is too short.").build();}
 		
-		data.userData.password = DigestUtils.sha512Hex(data.userData.password);
-		data.userData.passwordconfirm = DigestUtils.sha512Hex(data.userData.passwordconfirm);
-		
-		if(!data.userData.password.equals(data.userData.passwordconfirm)) {return Response.status(Status.FORBIDDEN).entity("Passwords dont match.").build();}
-		
-		Key userKey = datastore.newKeyFactory().setKind("User").newKey(data.authToken.username);			
+		Key tokenKey = datastore.newKeyFactory().setKind("Token").newKey(data.authToken.tokenID);
+
 		Transaction txn = datastore.newTransaction();
+		
 		try {
+			Entity token = txn.get(tokenKey);
+			
+			if(!tokenVerified(token, data.authToken)) {
+				LOG.fine("Failed to change password of user: " + data.authToken.username + " - Autentication failed");
+				txn.rollback();
+				return Response.status(Status.NETWORK_AUTHENTICATION_REQUIRED).build();	
+			}
+			if(data.userData.password.length()<6) {return Response.status(Status.BAD_REQUEST).entity("Password is too short.").build();}
+			
+			data.userData.password = DigestUtils.sha512Hex(data.userData.password);
+			data.userData.passwordconfirm = DigestUtils.sha512Hex(data.userData.passwordconfirm);
+			
+			if(!data.userData.password.equals(data.userData.passwordconfirm)) {return Response.status(Status.FORBIDDEN).entity("Passwords dont match.").build();}
+			
+			Key userKey = datastore.newKeyFactory().setKind("User").newKey(data.authToken.username);			
 			Entity userToChangePW = txn.get(userKey);
+
 			if(userToChangePW == null) {
 				LOG.fine("Failed to change password of user: " + data.authToken.username + " - User not found");
 				txn.rollback();
@@ -307,15 +362,22 @@ public class ManageResource {
 	@Consumes(MediaType.APPLICATION_JSON)
 	public Response changeUserState(@PathParam("username") String username, AuthToken at) {
 		LOG.fine("Attempt to change state of user: " + username);
-		if(!tokenVerified(at)) {
-			LOG.fine("Failed to change state of user: " + username + " - Autentication failed");
-			return Response.status(Status.NETWORK_AUTHENTICATION_REQUIRED).entity(LoginResource.tokens.toString()).build();	
-		}
 		
-		Key userKey = datastore.newKeyFactory().setKind("User").newKey(username);			
+		Key tokenKey = datastore.newKeyFactory().setKind("Token").newKey(at.tokenID);
+		
 		Transaction txn = datastore.newTransaction();
 		try {
+			Entity token = txn.get(tokenKey);
+			
+			if(!tokenVerified(token, at)) {
+				LOG.fine("Failed to change state of user: " + username + " - Autentication failed");
+				txn.rollback();
+				return Response.status(Status.NETWORK_AUTHENTICATION_REQUIRED).entity(LoginResource.tokens.toString()).build();	
+			}
+			
+			Key userKey = datastore.newKeyFactory().setKind("User").newKey(username);			
 			Entity userToState = txn.get(userKey);
+			
 			if(userToState == null) {
 				LOG.fine("Failed to change state of user: " + username + " - User not found");
 				txn.rollback();
@@ -366,31 +428,50 @@ public class ManageResource {
 	}
 	
 
-	@GET
+	@POST
 	@Path("/getuser/{username}")
 	@Consumes(MediaType.APPLICATION_JSON)
 	public Response getUser(@PathParam("username") String username, AuthToken at) {
 		LOG.fine("Attempt to search user: " + username);
-		if(!tokenVerified(at)) {
-			LOG.fine("Failed to search user: " + username + " - Autentication failed");
-			return Response.status(Status.NETWORK_AUTHENTICATION_REQUIRED).build();	
-		}
 		
-		if(Role.Clearance(at.role)>0) {
-			Key userKey = datastore.newKeyFactory().setKind("User").newKey(username);			
+		Key tokenKey = datastore.newKeyFactory().setKind("Token").newKey(at.tokenID);
+		
+		Transaction txn = datastore.newTransaction();
+		try {
+			Entity token = txn.get(tokenKey);
+			
+			if(!tokenVerified(token, at)) {
+				LOG.fine("Failed to search user: " + username + " - Autentication failed");
+				txn.rollback();
+				return Response.status(Status.NETWORK_AUTHENTICATION_REQUIRED).build();	
+			}
+			
+			if(Role.Clearance(at.role)>0) {
+				Key userKey = datastore.newKeyFactory().setKind("User").newKey(username);			
 				Entity user = datastore.get(userKey);
 				if(user == null) {
-					LOG.fine("Failed to search user: " + at.username + " - User not found");
-					return Response.status(Status.BAD_REQUEST).build();	
+					LOG.fine("Failed to search user: " + username + " - User not found");
+					txn.rollback();
+					return Response.status(Status.GONE).entity("Failed to search user: " + username + " - User not found").build();	
 				}
-			
-			LOG.fine("Successfully searched user: " + username);
-			return Response.ok(g.toJson(user)).build();
-		} else {
-			LOG.fine("Failed to search user: " + at.username + " - Not enought permission");
-			return Response.status(Status.FORBIDDEN).build();	
+				
+				LOG.fine("Successfully searched user: " + username);
+				txn.commit();
+				return Response.ok(g.toJson(user.getProperties())).build();
+			} else {
+				LOG.fine("Failed to search user: " + at.username + " - Not enought permission");
+				txn.rollback();
+				return Response.status(Status.FORBIDDEN).build();	
+			}
+		} catch (Exception e) {
+			txn.rollback();
+			return Response.status(Status.INTERNAL_SERVER_ERROR).entity(e.getMessage()).build();
+		} finally {
+			if(txn.isActive()) {
+				txn.rollback();
+				return Response.status(Status.INTERNAL_SERVER_ERROR).entity("Transaction did not commit").build();
+			}
 		}
-		
 	
 	}
 	
@@ -399,16 +480,37 @@ public class ManageResource {
 	@Path("/checklogged")
 	@Consumes(MediaType.APPLICATION_JSON)
 	public Response checkUserLogged(AuthToken at) {
-		//LOG.fine("Attempt to change password of user: " + at.username);
-		if(!tokenVerified(at)) {
-		//	LOG.fine("Failed to change password of user: " + at.username + " - Autentication failed");
-			return Response.status(Status.NETWORK_AUTHENTICATION_REQUIRED).entity(LoginResource.tokens.toString()).build();	
+		LOG.fine("Check login session of user: " + at.username);
+
+		Key tokenKey = datastore.newKeyFactory().setKind("Token").newKey(at.tokenID);
+		
+		Transaction txn = datastore.newTransaction();
+		try {
+			Entity token = txn.get(tokenKey);
+			
+			if(!tokenVerified(token, at)) {
+				LOG.fine("No session in place for: " + at.username);
+				txn.rollback();
+				return Response.status(Status.NETWORK_AUTHENTICATION_REQUIRED).build();	
+			}
+			
+			LOG.fine("Session confirmed for: " + at.username);
+			txn.commit();
+			return Response.ok().build();
+			
+		} catch (Exception e) {
+			txn.rollback();
+			return Response.status(Status.INTERNAL_SERVER_ERROR).entity(e.getMessage()).build();
+		} finally {
+			if(txn.isActive()) {
+				txn.rollback();
+				return Response.status(Status.INTERNAL_SERVER_ERROR).entity("Transaction did not commit").build();
+			}
 		}
-		return Response.ok().build();
 	}
 	
-	private boolean tokenVerified(AuthToken at) {
-		return(LoginResource.tokens.containsKey(at.username) && LoginResource.tokens.get(at.username).tokenID.equals(at.tokenID) && at.expirationData > System.currentTimeMillis());
+	private boolean tokenVerified(Entity at,AuthToken recievedToken) {
+		return(at!=null && recievedToken != null && at.getKey().getName().equals(recievedToken.tokenID) && at.getString("username").equals(recievedToken.username) && recievedToken.expirationData > System.currentTimeMillis());
 			
 	}
 }
